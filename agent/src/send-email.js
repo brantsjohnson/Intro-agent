@@ -3,6 +3,7 @@
 // Logs every send to sent-log.sqlite (dedup by event_url + recipient_email).
 import "dotenv/config";
 import { alreadySent, recordSend } from "./lib/log.js";
+import { postAgentUpdate } from "./lib/hq.js";
 
 /**
  * @param {object} args
@@ -65,6 +66,21 @@ export async function sendEmail(args) {
     subject: args.subject,
     kind: args.kind,
     gmail_message_id: messageId,
+  });
+
+  await postAgentUpdate({
+    kind: "send",
+    title: `Sent: ${args.toName || to}`,
+    body: `To: ${to}${bcc.length ? `\nBCC: ${bcc.join(", ")}` : ""}\nSubject: ${args.subject}\nEvent: ${args.eventName}`,
+    meta: {
+      to,
+      bcc,
+      subject: args.subject,
+      eventName: args.eventName,
+      eventUrl: args.eventUrl,
+      kind: args.kind,
+      gmailMessageId: messageId,
+    },
   });
 
   return { skipped: false, gmailMessageId: messageId };

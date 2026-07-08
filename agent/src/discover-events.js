@@ -16,6 +16,11 @@ import { fetchPage } from "./lib/fetch-page.js";
  * @param {string[]} filters.regions
  */
 export async function discoverEvents(filters = readFiltersFromEnv()) {
+  // HQ / env can pin a single event URL for a focused run.
+  if (process.env.EVENT_URL && looksLikeUrl(process.env.EVENT_URL)) {
+    return [await normalizeEventFromUrl(process.env.EVENT_URL)];
+  }
+
   const results = [];
 
   if (process.env.EVENTBRITE_API_KEY) {

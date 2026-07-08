@@ -10,10 +10,12 @@
     "contacts": "node src/resolve-contacts.js",
     "compose": "node src/compose-email.js",
     "send": "node src/send-email.js",
-    "run": "node run.js"
+    "run": "node run.js",
+    "watch": "node watcher.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.30.0",
+    "@supabase/supabase-js": "^2.110.1",
     "better-sqlite3": "^11.3.0",
     "cheerio": "^1.0.0",
     "dotenv": "^16.4.5",

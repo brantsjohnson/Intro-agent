@@ -2,7 +2,7 @@
 //
 // RUN_MODE=draft (default): fully unattended. Discovers events, finds people, guesses
 //   emails, drafts messages, and writes a review report to agent/drafts-review/.
-//   Sends nothing. Safe to run overnight.
+//   Posts each draft into HQ agent_updates. Sends nothing.
 // RUN_MODE=send: interactive. Shows drafts per event and asks y/n before sending.
 //   Sends to the top guess and BCCs the other permutations so one variant lands.
 import "dotenv/config";
@@ -14,6 +14,7 @@ import { composeEmail } from "./src/compose-email.js";
 import { sendEmail } from "./src/send-email.js";
 import { confirm } from "./src/lib/prompt.js";
 import { alreadySent } from "./src/lib/log.js";
+import { postAgentUpdate } from "./src/lib/hq.js";
 
 const ROLES = {
   sponsor: "Head of Marketing or Partnerships",
@@ -23,9 +24,21 @@ const ROLES = {
 const MODE = (process.env.RUN_MODE || "draft").toLowerCase();
 
 async function main() {
+  await postAgentUpdate({
+    kind: "run_started",
+    title: `Outreach agent started (${MODE})`,
+    body: "Discovering events and drafting outreach…",
+    meta: { mode: MODE },
+  });
+
   const events = await discoverEvents();
   if (!events.length) {
     console.log("No events discovered. Edit filters in .env or add seed-events.json.");
+    await postAgentUpdate({
+      kind: "info",
+      title: "No events found",
+      body: "Add seed-events.json or set OUTREACH_* filters / Tavily, then run again.",
+    });
     return;
   }
   console.log(`Discovered ${events.length} event(s). Mode: ${MODE}.\n`);
@@ -42,6 +55,12 @@ async function main() {
       details = await extractEventDetails(event.url);
     } catch (err) {
       console.error(`  ✗ extraction failed: ${err.message}`);
+      await postAgentUpdate({
+        kind: "error",
+        title: `Extraction failed: ${event.name || event.url}`,
+        body: err.message,
+        meta: { eventUrl: event.url },
+      });
       continue;
     }
     console.log(`  organizer: ${details.organizerName || "?"} @ ${details.organizerCompany || "?"}`);
@@ -50,7 +69,13 @@ async function main() {
 
     const targets = [];
     if (details.organizerCompany) {
-      targets.push({ kind: "organizer", companyName: details.organizerCompany, role: ROLES.organizer, fallbackName: details.organizerName, fallbackEmail: details.organizerEmail });
+      targets.push({
+        kind: "organizer",
+        companyName: details.organizerCompany,
+        role: ROLES.organizer,
+        fallbackName: details.organizerName,
+        fallbackEmail: details.organizerEmail,
+      });
     }
     for (const sp of details.sponsors) {
       targets.push({ kind: "sponsor", companyName: sp.companyName, role: ROLES.sponsor });
@@ -61,6 +86,12 @@ async function main() {
       const primary = contact.email || t.fallbackEmail || null;
       if (!primary) {
         console.log(`  · ${t.companyName}: no email found (${contact.name || "no name"}) — needs manual research`);
+        await postAgentUpdate({
+          kind: "info",
+          title: `Needs research: ${t.companyName}`,
+          body: `No email for ${contact.name || "unknown"} (${t.kind}) at ${event.name}.`,
+          meta: { company: t.companyName, eventUrl: event.url },
+        });
         continue;
       }
       if (alreadySent({ eventUrl: event.url, recipientEmail: primary })) {
@@ -74,7 +105,7 @@ async function main() {
         eventName: event.name,
         eventContext: `event URL: ${event.url}`,
       });
-      allDrafts.push({
+      const entry = {
         event: { name: event.name, url: event.url, date: event.date || null },
         kind: t.kind,
         company: t.companyName,
@@ -85,13 +116,28 @@ async function main() {
         confidence: contact.confidence,
         subject: draft.subject,
         body: draft.body,
+      };
+      allDrafts.push(entry);
+      console.log(
+        `  ✓ drafted → ${t.companyName} · ${contact.name || "?"} <${primary}>${contact.emailVerified ? " (listed)" : " (guess)"}`,
+      );
+      await postAgentUpdate({
+        kind: "draft",
+        title: `Draft: ${t.companyName} (${t.kind})`,
+        body: `To: ${primary}${entry.emailGuesses.length > 1 ? `\nBCC: ${entry.emailGuesses.slice(1).join(", ")}` : ""}\nSubject: ${draft.subject}\n\n${draft.body}`,
+        meta: entry,
       });
-      console.log(`  ✓ drafted → ${t.company} · ${contact.name || "?"} <${primary}>${contact.emailVerified ? " (listed)" : " (guess)"}`);
     }
   }
 
   if (!allDrafts.length) {
     console.log("\nNo drafts produced.");
+    await postAgentUpdate({
+      kind: "run_finished",
+      title: "Run finished — no drafts",
+      body: "Nothing ready to send. Check company sites / search keys.",
+      meta: { draftCount: 0, mode: MODE },
+    });
     return;
   }
 
@@ -99,6 +145,12 @@ async function main() {
     await sendFlow(allDrafts);
   } else {
     writeReview(allDrafts);
+    await postAgentUpdate({
+      kind: "run_finished",
+      title: `${allDrafts.length} draft(s) ready for review`,
+      body: "Nothing was sent. Open the Agent tab to review, then request a send run when ready.",
+      meta: { draftCount: allDrafts.length, mode: MODE },
+    });
   }
 }
 
@@ -111,16 +163,37 @@ function writeReview(drafts) {
 
   writeFileSync(jsonPath, JSON.stringify(drafts, null, 2));
 
-  const lines = [`# Outreach drafts — ${new Date().toLocaleString()}`, "", `${drafts.length} draft(s). Review, then reply here or run \`RUN_MODE=send npm start\` to send.`, ""];
+  const lines = [
+    `# Outreach drafts — ${new Date().toLocaleString()}`,
+    "",
+    `${drafts.length} draft(s). Review in HQ Agent tab, then run \`RUN_MODE=send npm start\` to send.`,
+    "",
+  ];
   for (const d of drafts) {
-    lines.push(`---`, "", `## ${d.company} — ${d.kind}`, `**Event:** ${d.event.name} (${d.event.url})`, `**Person:** ${d.contact.name || "?"}${d.contact.title ? ` — ${d.contact.title}` : ""}`, `**Send to:** ${d.primaryEmail} ${d.emailVerified ? "(listed on site)" : "(guessed)"}`, d.emailGuesses.length > 1 ? `**BCC variants:** ${d.emailGuesses.join(", ")}` : "", `**Confidence:** ${d.confidence}`, "", `**Subject:** ${d.subject}`, "", "```", d.body, "```", "");
+    lines.push(
+      `---`,
+      "",
+      `## ${d.company} — ${d.kind}`,
+      `**Event:** ${d.event.name} (${d.event.url})`,
+      `**Person:** ${d.contact.name || "?"}${d.contact.title ? ` — ${d.contact.title}` : ""}`,
+      `**Send to:** ${d.primaryEmail} ${d.emailVerified ? "(listed on site)" : "(guessed)"}`,
+      d.emailGuesses.length > 1 ? `**BCC variants:** ${d.emailGuesses.join(", ")}` : "",
+      `**Confidence:** ${d.confidence}`,
+      "",
+      `**Subject:** ${d.subject}`,
+      "",
+      "```",
+      d.body,
+      "```",
+      "",
+    );
   }
-  writeFileSync(mdPath, lines.filter((l) => l !== undefined).join("\n"));
+  writeFileSync(mdPath, lines.filter((l) => l !== undefined && l !== "").join("\n"));
 
   console.log(`\n📝 ${drafts.length} draft(s) written for review:`);
   console.log(`   ${mdPath}`);
   console.log(`   ${jsonPath}`);
-  console.log(`\nNothing was sent. Review in the morning, then run: RUN_MODE=send npm start`);
+  console.log(`\nNothing was sent. Review in HQ, then run: RUN_MODE=send npm start`);
 }
 
 async function sendFlow(drafts) {
@@ -156,11 +229,24 @@ async function sendFlow(drafts) {
       if (!res.skipped) sent += 1;
     } catch (err) {
       console.error(`  ✗ send failed: ${err.message}`);
+      await postAgentUpdate({
+        kind: "error",
+        title: `Send failed: ${d.primaryEmail}`,
+        body: err.message,
+        meta: { company: d.company },
+      });
     }
   }
+  await postAgentUpdate({
+    kind: "run_finished",
+    title: `Send run finished (${sent} sent)`,
+    body: `${sent} of ${drafts.length} draft(s) delivered.`,
+    meta: { sent, total: drafts.length },
+  });
 }
 
-main().catch((err) => {
+main().catch(async (err) => {
   console.error(err);
+  await postAgentUpdate({ kind: "error", title: "Agent crashed", body: String(err?.message || err) });
   process.exit(1);
 });

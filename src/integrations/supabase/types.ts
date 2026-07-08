@@ -14,6 +14,72 @@ export type Database = {
   }
   public: {
     Tables: {
+      agent_run_requests: {
+        Row: {
+          created_at: string
+          event_url: string | null
+          finished_at: string | null
+          id: string
+          mode: string
+          note: string | null
+          result: string | null
+          started_at: string | null
+          status: string
+        }
+        Insert: {
+          created_at?: string
+          event_url?: string | null
+          finished_at?: string | null
+          id?: string
+          mode?: string
+          note?: string | null
+          result?: string | null
+          started_at?: string | null
+          status?: string
+        }
+        Update: {
+          created_at?: string
+          event_url?: string | null
+          finished_at?: string | null
+          id?: string
+          mode?: string
+          note?: string | null
+          result?: string | null
+          started_at?: string | null
+          status?: string
+        }
+        Relationships: []
+      }
+      agent_updates: {
+        Row: {
+          body: string | null
+          created_at: string
+          id: string
+          kind: string
+          meta: Json | null
+          read_at: string | null
+          title: string
+        }
+        Insert: {
+          body?: string | null
+          created_at?: string
+          id?: string
+          kind: string
+          meta?: Json | null
+          read_at?: string | null
+          title: string
+        }
+        Update: {
+          body?: string | null
+          created_at?: string
+          id?: string
+          kind?: string
+          meta?: Json | null
+          read_at?: string | null
+          title?: string
+        }
+        Relationships: []
+      }
       contacts: {
         Row: {
           company: string | null
