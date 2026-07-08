@@ -12,4 +12,8 @@ export default defineConfig({
     // nitro/vite builds from this
     server: { entry: "server" },
   },
+  // Deploy target is Vercel. Nitro's explicit preset wins over the config's
+  // Cloudflare default; the Lovable editor sandbox still overrides this to its
+  // own preset, so this only affects local builds and Vercel.
+  nitro: { preset: "vercel" },
 });
