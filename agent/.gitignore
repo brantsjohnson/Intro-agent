@@ -1,0 +1,7 @@
+.env
+node_modules/
+credentials.json
+token.json
+sent-log.sqlite
+sent-log.sqlite-journal
+*.log
