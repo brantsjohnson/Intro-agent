@@ -8,6 +8,7 @@ import { alreadySent, recordSend } from "./lib/log.js";
  * @param {object} args
  * @param {string} args.to
  * @param {string|null} [args.toName]
+ * @param {string[]} [args.bcc]      Extra guessed addresses to BCC (permutation strategy).
  * @param {string} args.subject
  * @param {string} args.body        Plain text.
  * @param {string} args.eventName
@@ -17,6 +18,7 @@ import { alreadySent, recordSend } from "./lib/log.js";
 export async function sendEmail(args) {
   const to = args.to?.trim();
   if (!to) throw new Error("Missing recipient");
+  const bcc = (args.bcc || []).map((e) => e.trim()).filter((e) => e && e !== to);
   if (alreadySent({ eventUrl: args.eventUrl, recipientEmail: to })) {
     return { skipped: true, reason: "already sent for this event" };
   }
@@ -37,6 +39,7 @@ export async function sendEmail(args) {
     body: JSON.stringify({
       to,
       toName: args.toName ?? null,
+      bcc: bcc.length ? bcc.join(", ") : null,
       from: process.env.GMAIL_SEND_AS ?? null,
       subject: args.subject,
       body: args.body,

@@ -1,0 +1,93 @@
+{
+  "name": "HQ Gmail Send",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "hq-gmail-send",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "b1a1e001-0001-4001-8001-000000000001",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [-100, 0],
+      "webhookId": "hq-gmail-send"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "secretcheck",
+              "leftValue": "={{ $json.headers['x-webhook-secret'] }}",
+              "rightValue": "f0dd6d7d89339fab44a3315348fa6641e1e2f2a708ba1cad",
+              "operator": { "type": "string", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "b1a1e001-0002-4001-8001-000000000002",
+      "name": "Check secret",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [120, 0]
+    },
+    {
+      "parameters": {
+        "fromEmail": "={{ $json.body.from }}",
+        "toEmail": "={{ $json.body.to }}",
+        "subject": "={{ $json.body.subject }}",
+        "emailFormat": "text",
+        "text": "={{ $json.body.body }}",
+        "options": { "ccEmail": "", "bccEmail": "={{ $json.body.bcc || '' }}" }
+      },
+      "id": "b1a1e001-0003-4001-8001-000000000003",
+      "name": "Send Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2,
+      "position": [360, -100],
+      "credentials": {}
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"id\": $json.messageId || $json.response || \"sent\" } }}",
+        "options": {}
+      },
+      "id": "b1a1e001-0004-4001-8001-000000000004",
+      "name": "Respond OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [600, -100]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseCode": 401,
+        "responseBody": "={{ { \"error\": \"unauthorized\" } }}",
+        "options": {}
+      },
+      "id": "b1a1e001-0005-4001-8001-000000000005",
+      "name": "Respond Unauthorized",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [360, 120]
+    }
+  ],
+  "connections": {
+    "Webhook": { "main": [[{ "node": "Check secret", "type": "main", "index": 0 }]] },
+    "Check secret": {
+      "main": [
+        [{ "node": "Send Email", "type": "main", "index": 0 }],
+        [{ "node": "Respond Unauthorized", "type": "main", "index": 0 }]
+      ]
+    },
+    "Send Email": { "main": [[{ "node": "Respond OK", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" }
+}

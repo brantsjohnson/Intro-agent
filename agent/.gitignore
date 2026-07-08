@@ -4,4 +4,6 @@ credentials.json
 token.json
 sent-log.sqlite
 sent-log.sqlite-journal
+drafts-review/
+seed-events.json
 *.log
