@@ -4,6 +4,7 @@
 import "dotenv/config";
 import { alreadySent, recordSend } from "./lib/log.js";
 import { postAgentUpdate } from "./lib/hq.js";
+import { buildHtmlEmail, signaturePlain } from "./lib/signature.js";
 
 /**
  * @param {object} args
@@ -11,7 +12,7 @@ import { postAgentUpdate } from "./lib/hq.js";
  * @param {string|null} [args.toName]
  * @param {string[]} [args.bcc]      Extra guessed addresses to BCC (permutation strategy).
  * @param {string} args.subject
- * @param {string} args.body        Plain text.
+ * @param {string} args.body        Plain text (signature appended for you).
  * @param {string} args.eventName
  * @param {string} args.eventUrl
  * @param {"sponsor"|"organizer"} args.kind
@@ -34,6 +35,9 @@ export async function sendEmail(args) {
   const headers = { "Content-Type": "application/json" };
   if (process.env.N8N_WEBHOOK_SECRET) headers["x-webhook-secret"] = process.env.N8N_WEBHOOK_SECRET;
 
+  const plainBody = `${args.body.trim()}${signaturePlain()}`;
+  const htmlBody = buildHtmlEmail(args.body);
+
   const res = await fetch(url, {
     method: "POST",
     headers,
@@ -41,9 +45,10 @@ export async function sendEmail(args) {
       to,
       toName: args.toName ?? null,
       bcc: bcc.length ? bcc.join(", ") : null,
-      from: process.env.GMAIL_SEND_AS ?? null,
+      from: process.env.GMAIL_SEND_AS || "brant@intro.events",
       subject: args.subject,
-      body: args.body,
+      body: plainBody,
+      html: htmlBody,
     }),
   });
 

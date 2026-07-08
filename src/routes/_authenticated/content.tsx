@@ -102,10 +102,16 @@ function DraftCard({ draft, onChange }: { draft: any; onChange: () => void }) {
             {pm.isPending ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />} Publish to LinkedIn
           </button>
         )}
+        {isCompany && draft.status !== "posted" && (
+          <button onClick={() => pm.mutate()} disabled={pm.isPending}
+            className="text-xs px-3 py-1.5 bg-ink text-paper rounded-md hover:opacity-90 flex items-center gap-1 disabled:opacity-50">
+            {pm.isPending ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />} Publish to company page
+          </button>
+        )}
         {isCompany && (
           <a href={"https://www.linkedin.com/company/setup/new/?shareActive=true&text=" + encodeURIComponent(body)}
             target="_blank" rel="noopener" className="text-xs px-3 py-1.5 border border-border rounded-md hover:bg-muted flex items-center gap-1">
-            <ExternalLink size={12} /> Post to company page
+            <ExternalLink size={12} /> Open company composer
           </a>
         )}
         <a href={"https://www.linkedin.com/feed/?shareActive=true&text=" + encodeURIComponent(body)}
