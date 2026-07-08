@@ -5,7 +5,6 @@ import { extractEventDetails } from "./src/extract-event-details.js";
 import { resolveContact } from "./src/resolve-contacts.js";
 import { composeEmail } from "./src/compose-email.js";
 import { sendEmail } from "./src/send-email.js";
-import { loadAuthorizedClient } from "./src/gmail-auth.js";
 import { confirm } from "./src/lib/prompt.js";
 import { alreadySent } from "./src/lib/log.js";
 
@@ -15,8 +14,6 @@ const ROLES = {
 };
 
 async function main() {
-  const auth = await loadAuthorizedClient();
-
   const events = await discoverEvents();
   if (!events.length) {
     console.log("No events discovered. Edit filters in .env or add seed-events.json.");
@@ -95,7 +92,6 @@ async function main() {
     for (const d of drafts) {
       try {
         const res = await sendEmail({
-          auth,
           to: d.contact.email,
           toName: d.contact.name,
           subject: d.draft.subject,

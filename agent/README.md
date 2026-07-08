@@ -1,6 +1,6 @@
 # Intro Outreach Agent
 
-A Node.js CLI that finds business events, extracts organizers + sponsors, resolves contacts, and sends outreach from **your own Gmail account** (Gmail API OAuth2 — replies land in your normal inbox).
+A Node.js CLI that finds business events, extracts organizers + sponsors, resolves contacts, and sends outreach from **your own Gmail account via a self-hosted n8n webhook** (n8n owns the Gmail OAuth, so replies land in your normal inbox).
 
 No UI. Run manually first, schedule later. Every send requires terminal confirmation in v1.
 
@@ -10,13 +10,14 @@ No UI. Run manually first, schedule later. Every send requires terminal confirma
 
 Build and test each step in isolation before wiring `run.js`:
 
-1. `discover-events.js` — Eventbrite + web search → normalized events.
+1. `discover-events.js` — single event URL scrape (schema.org / OpenGraph) or Eventbrite + web search → normalized events.
 2. `extract-event-details.js` — fetch event page + sponsors/about pages → Claude → strict JSON.
 3. `resolve-contacts.js` — pluggable: site scrape first, paid enrichment (Hunter/Clay) as a stub.
-4. `gmail-auth.js` — Google Cloud OAuth2 flow (Desktop app), `token.json` persisted.
-5. `compose-email.js` — Claude drafts using positioning tracks (see below). No em dashes. ≤120 words.
-6. `send-email.js` — Gmail API send + `sent-log.sqlite` de-dup.
-7. `run.js` — end-to-end, batched per event, y/n confirmation before every send.
+4. `compose-email.js` — Claude drafts using positioning tracks (see below). No em dashes. ≤120 words.
+5. `send-email.js` — POSTs to the n8n Gmail-send webhook + `sent-log.sqlite` de-dup.
+6. `run.js` — end-to-end, batched per event, y/n confirmation before every send.
+
+Email sending goes through n8n rather than the Gmail API directly, so there is no Google Cloud OAuth setup. Stand up an n8n workflow with a Webhook trigger + a Gmail "Send" node, and put its URL in `N8N_EMAIL_SEND_URL`.
 
 Test with one real event URL first. Get output right before moving on.
 
@@ -25,12 +26,13 @@ Test with one real event URL first. Get output right before moving on.
 ## Required config (see `.env.example`)
 
 - `ANTHROPIC_API_KEY` — Claude for extraction + drafting.
+- `N8N_EMAIL_SEND_URL` — your n8n Gmail-send webhook (can be the same workflow the web app uses).
+- `N8N_WEBHOOK_SECRET` — shared secret sent as `x-webhook-secret`; verify it inside the n8n workflow.
+- `GMAIL_SEND_AS` — your main Gmail or a configured "Send As" alias (passed to n8n as `from`).
+- `TAVILY_API_KEY` — optional web search for discovery. Not needed for single-URL runs.
 - `EVENTBRITE_API_KEY` — optional; discovery falls back to web search if absent.
 - `HUNTER_API_KEY` — optional; enrichment fallback.
-- `GMAIL_SEND_AS` — your main Gmail or a configured "Send As" alias.
 - `OUTREACH_INDUSTRIES`, `OUTREACH_DATE_FROM`, `OUTREACH_DATE_TO`, `OUTREACH_REGIONS` — outreach filters.
-
-Google OAuth2 credentials live in `credentials.json` (not `.env`). See `gmail-auth.js` for the walkthrough.
 
 ---
 
@@ -40,17 +42,16 @@ Google OAuth2 credentials live in `credentials.json` (not `.env`). See `gmail-au
 cd agent
 npm install
 cp .env.example .env         # fill in keys
-node gmail-auth.js           # one-time browser auth → writes token.json
 node run.js                  # dry-run preview + y/n before each send
 ```
 
 Individual steps:
 
 ```bash
-node discover-events.js
-node extract-event-details.js https://someconference.com/2026
-node resolve-contacts.js "Acme Corp" "Head of Partnerships"
-node compose-email.js sponsor "Acme Corp" "Jane Doe" "SaaSFest 2026"
+node src/discover-events.js https://someconference.com/2026
+node src/extract-event-details.js https://someconference.com/2026
+node src/resolve-contacts.js "Acme Corp" "Head of Partnerships"
+node src/compose-email.js sponsor "Acme Corp" "Jane Doe" "SaaSFest 2026"
 ```
 
 ---
@@ -89,10 +90,10 @@ Angle: if the event has visible sponsors, note that sponsors are increasingly as
 
 ## What Cursor should ask me before running live
 
-1. Which Gmail address / alias to send from.
+1. Which Gmail address / alias to send from (`GMAIL_SEND_AS`).
 2. Industries, date range, and regions for the outreach filter.
-3. Anthropic and Eventbrite keys.
-4. Whether I've done the Google Cloud OAuth setup yet (walk me through if not).
+3. Anthropic key (and optional Tavily/Eventbrite keys).
+4. The n8n Gmail-send webhook URL + shared secret.
 
 ---
 
@@ -108,7 +109,6 @@ agent/
     discover-events.js
     extract-event-details.js
     resolve-contacts.js
-    gmail-auth.js
     compose-email.js
     send-email.js
     lib/

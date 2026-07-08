@@ -1,16 +1,19 @@
 import { createServerFn } from "@tanstack/react-start";
 import { generateText, Output } from "ai";
 import { z } from "zod";
-import { createLovableAiGatewayProvider } from "./ai-gateway.server";
+import { createAnthropic } from "@ai-sdk/anthropic";
 import { serverSupabase } from "./supabase-server";
 
 function gateway() {
-  const key = process.env.LOVABLE_API_KEY;
-  if (!key) throw new Error("Lovable AI not configured");
-  return createLovableAiGatewayProvider(key);
+  const key = process.env.ANTHROPIC_API_KEY;
+  if (!key) throw new Error("ANTHROPIC_API_KEY not configured");
+  return createAnthropic({ apiKey: key });
 }
 
-const MODEL = "google/gemini-3-flash-preview";
+// Cheap/fast model for high-frequency classification; stronger model for the
+// content-heavy daily plan and post drafting.
+const FAST_MODEL = "claude-haiku-4-5-20251001";
+const SMART_MODEL = "claude-sonnet-4-5-20250929";
 
 // ───── CLASSIFY DUMP ─────
 export const classifyDump = createServerFn({ method: "POST" })
@@ -36,7 +39,7 @@ export const classifyDump = createServerFn({ method: "POST" })
 
     const provider = gateway();
     const { output } = await generateText({
-      model: provider(MODEL),
+      model: provider(FAST_MODEL),
       prompt: `You are an assistant organizing a founder's messy brain dump.
 
 PROJECTS:
@@ -203,8 +206,8 @@ COMPANY LINKEDIN VOICE: ${company?.voice ?? ""} / ${company?.tone ?? ""}
 
     const provider = gateway();
     const { output } = await generateText({
-      model: provider(MODEL),
-      prompt: `You are the founder's daily command center. Generate today's checklist. Be specific — reference actual notes/topics, not generic prompts.
+      model: provider(SMART_MODEL),
+      prompt: `You are the founder's daily command center. Generate today's checklist. Be specific, referencing actual notes/topics, not generic prompts.
 
 ${ctx}
 
@@ -279,7 +282,7 @@ export const draftPost = createServerFn({ method: "POST" })
 
     const provider = gateway();
     const { output } = await generateText({
-      model: provider(MODEL),
+      model: provider(SMART_MODEL),
       prompt: `Draft a post for "${channel.name}".
 VOICE: ${channel.voice ?? ""}
 TONE: ${channel.tone ?? ""}

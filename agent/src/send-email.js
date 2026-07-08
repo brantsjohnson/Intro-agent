@@ -1,8 +1,7 @@
-// Step 6: send via Gmail API. Uses the authenticated account from gmail-auth.js.
+// Step 6: send outreach via an n8n webhook (n8n owns the Gmail OAuth, so the
+// email lands in your normal sent folder and replies come back to your inbox).
 // Logs every send to sent-log.sqlite (dedup by event_url + recipient_email).
 import "dotenv/config";
-import { google } from "googleapis";
-import { loadAuthorizedClient } from "./gmail-auth.js";
 import { alreadySent, recordSend } from "./lib/log.js";
 
 /**
@@ -14,7 +13,6 @@ import { alreadySent, recordSend } from "./lib/log.js";
  * @param {string} args.eventName
  * @param {string} args.eventUrl
  * @param {"sponsor"|"organizer"} args.kind
- * @param {import("google-auth-library").OAuth2Client} [args.auth]
  */
 export async function sendEmail(args) {
   const to = args.to?.trim();
@@ -23,30 +21,38 @@ export async function sendEmail(args) {
     return { skipped: true, reason: "already sent for this event" };
   }
 
-  const auth = args.auth || (await loadAuthorizedClient());
-  const gmail = google.gmail({ version: "v1", auth });
+  const url = process.env.N8N_EMAIL_SEND_URL;
+  if (!url) {
+    throw new Error(
+      "N8N_EMAIL_SEND_URL is not set. Point it at your n8n Gmail-send webhook (see agent/.env.example).",
+    );
+  }
 
-  const from = process.env.GMAIL_SEND_AS;
-  if (!from) throw new Error("GMAIL_SEND_AS is not set");
+  const headers = { "Content-Type": "application/json" };
+  if (process.env.N8N_WEBHOOK_SECRET) headers["x-webhook-secret"] = process.env.N8N_WEBHOOK_SECRET;
 
-  const toHeader = args.toName ? `"${args.toName.replace(/"/g, "'")}" <${to}>` : to;
-  const rfc2822 = [
-    `From: ${from}`,
-    `To: ${toHeader}`,
-    `Subject: ${args.subject}`,
-    'MIME-Version: 1.0',
-    'Content-Type: text/plain; charset="UTF-8"',
-    "",
-    args.body,
-  ].join("\r\n");
+  const res = await fetch(url, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      to,
+      toName: args.toName ?? null,
+      from: process.env.GMAIL_SEND_AS ?? null,
+      subject: args.subject,
+      body: args.body,
+    }),
+  });
 
-  const raw = Buffer.from(rfc2822, "utf8")
-    .toString("base64")
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/, "");
+  const text = await res.text();
+  if (!res.ok) throw new Error(`n8n send: ${res.status} ${text}`);
 
-  const { data } = await gmail.users.messages.send({ userId: "me", requestBody: { raw } });
+  let messageId = null;
+  try {
+    const json = JSON.parse(text);
+    messageId = json.id ?? json.messageId ?? json.gmailMessageId ?? null;
+  } catch {
+    // Non-JSON response is fine; the send still succeeded.
+  }
 
   recordSend({
     event_name: args.eventName,
@@ -55,19 +61,23 @@ export async function sendEmail(args) {
     recipient_name: args.toName || null,
     subject: args.subject,
     kind: args.kind,
-    gmail_message_id: data.id || null,
+    gmail_message_id: messageId,
   });
 
-  return { skipped: false, gmailMessageId: data.id };
+  return { skipped: false, gmailMessageId: messageId };
 }
 
-// CLI: `node src/send-email.js` — sends a self-test.
+// CLI: `node src/send-email.js` — sends a self-test to GMAIL_SEND_AS.
 if (import.meta.url === `file://${process.argv[1]}`) {
   const to = process.env.GMAIL_SEND_AS;
+  if (!to) {
+    console.error("Set GMAIL_SEND_AS in .env to run the self-test.");
+    process.exit(1);
+  }
   const res = await sendEmail({
     to,
     subject: "Intro agent self-test",
-    body: "This is a self-test from the outreach agent. If you received this, Gmail auth works.\n\nBrant",
+    body: "This is a self-test from the outreach agent. If you received this, the n8n send webhook works.\n\nBrant",
     eventName: "Self test",
     eventUrl: `self-test:${Date.now()}`,
     kind: "organizer",

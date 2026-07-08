@@ -2,35 +2,37 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { serverSupabase } from "./supabase-server";
 
-const GW = "https://connector-gateway.lovable.dev";
+// Gmail + LinkedIn go through self-hosted n8n webhooks (n8n owns the OAuth to
+// Google/LinkedIn). Each action has its own webhook URL, configured via env.
+// A shared secret is sent as `x-webhook-secret` so the n8n workflow can reject
+// anything that is not this app.
 
-function authHeaders(connectorKey: string) {
-  const lovable = process.env.LOVABLE_API_KEY;
-  const conn = process.env[connectorKey];
-  if (!lovable) throw new Error("LOVABLE_API_KEY missing");
-  if (!conn) throw new Error(`${connectorKey} missing — connect the integration`);
-  return {
-    Authorization: `Bearer ${lovable}`,
-    "X-Connection-Api-Key": conn,
-    "Content-Type": "application/json",
-  };
+async function callWebhook<T = unknown>(
+  urlEnv: string,
+  payload: unknown,
+): Promise<T> {
+  const url = process.env[urlEnv];
+  if (!url) {
+    throw new Error(
+      `${urlEnv} is not set. Add the n8n webhook URL to your environment to enable this integration.`,
+    );
+  }
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  const secret = process.env.N8N_WEBHOOK_SECRET;
+  if (secret) headers["x-webhook-secret"] = secret;
+
+  const res = await fetch(url, { method: "POST", headers, body: JSON.stringify(payload) });
+  const text = await res.text();
+  if (!res.ok) throw new Error(`n8n ${urlEnv}: ${res.status} ${text}`);
+  if (!text) return undefined as T;
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    return text as unknown as T;
+  }
 }
 
 // ────────── GMAIL ──────────
-
-function rfc2822(to: string, subject: string, body: string) {
-  const msg = [
-    `To: ${to}`,
-    `Subject: ${subject}`,
-    'Content-Type: text/plain; charset="UTF-8"',
-    "",
-    body,
-  ].join("\r\n");
-  return btoa(unescape(encodeURIComponent(msg)))
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/, "");
-}
 
 export const sendGmail = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) =>
@@ -42,108 +44,74 @@ export const sendGmail = createServerFn({ method: "POST" })
     }).parse(d),
   )
   .handler(async ({ data }) => {
-    const raw = rfc2822(data.to, data.subject, data.body);
-    const path = data.asDraft
-      ? "/google_mail/gmail/v1/users/me/drafts"
-      : "/google_mail/gmail/v1/users/me/messages/send";
-    const body = data.asDraft ? { message: { raw } } : { raw };
-    const res = await fetch(`${GW}${path}`, {
-      method: "POST",
-      headers: authHeaders("GOOGLE_MAIL_API_KEY"),
-      body: JSON.stringify(body),
+    return callWebhook("N8N_GMAIL_SEND_URL", {
+      to: data.to,
+      subject: data.subject,
+      body: data.body,
+      asDraft: data.asDraft ?? false,
     });
-    if (!res.ok) throw new Error(`Gmail: ${res.status} ${await res.text()}`);
-    return res.json();
   });
+
+const RecentEmail = z.object({
+  id: z.string().optional(),
+  from: z.string().optional(),
+  subject: z.string().optional(),
+  date: z.string().optional(),
+  snippet: z.string().optional(),
+});
 
 export const fetchRecentEmails = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) =>
     z.object({ query: z.string().optional(), max: z.number().optional() }).parse(d ?? {}),
   )
   .handler(async ({ data }) => {
-    const q = encodeURIComponent(data.query ?? "is:unread newer_than:7d");
-    const max = data.max ?? 15;
-    const list = await fetch(
-      `${GW}/google_mail/gmail/v1/users/me/messages?maxResults=${max}&q=${q}`,
-      { headers: authHeaders("GOOGLE_MAIL_API_KEY") },
-    );
-    if (!list.ok) throw new Error(`Gmail list: ${list.status} ${await list.text()}`);
-    const { messages = [] } = (await list.json()) as { messages?: { id: string }[] };
-
-    const details = await Promise.all(
-      messages.slice(0, max).map(async (m) => {
-        const r = await fetch(
-          `${GW}/google_mail/gmail/v1/users/me/messages/${m.id}?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Date`,
-          { headers: authHeaders("GOOGLE_MAIL_API_KEY") },
-        );
-        if (!r.ok) return null;
-        const j = (await r.json()) as {
-          id: string;
-          snippet?: string;
-          payload?: { headers?: { name: string; value: string }[] };
-        };
-        const h = (n: string) =>
-          j.payload?.headers?.find((x) => x.name.toLowerCase() === n.toLowerCase())?.value ?? "";
-        return {
-          id: j.id,
-          from: h("From"),
-          subject: h("Subject"),
-          date: h("Date"),
-          snippet: j.snippet ?? "",
-        };
-      }),
-    );
-    return details.filter(Boolean);
+    const raw = await callWebhook<unknown>("N8N_GMAIL_FETCH_URL", {
+      query: data.query ?? "is:unread newer_than:7d",
+      max: data.max ?? 15,
+    });
+    // n8n may return the array directly, or wrapped as { messages: [...] } / { data: [...] }.
+    const arr = Array.isArray(raw)
+      ? raw
+      : ((raw as { messages?: unknown[]; data?: unknown[] })?.messages ??
+          (raw as { data?: unknown[] })?.data ??
+          []);
+    return z.array(RecentEmail).catch([]).parse(arr);
   });
 
 // ────────── LINKEDIN ──────────
-
-async function linkedInMe() {
-  const res = await fetch(`${GW}/linkedin/v2/userinfo`, {
-    headers: authHeaders("LINKEDIN_API_KEY"),
-  });
-  if (!res.ok) throw new Error(`LinkedIn me: ${res.status} ${await res.text()}`);
-  return (await res.json()) as { sub: string; name?: string; email?: string };
-}
-
-export const getLinkedInProfile = createServerFn({ method: "GET" })
-  .handler(async () => linkedInMe());
 
 export const publishLinkedInPost = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) =>
     z.object({
       draftId: z.string().uuid().optional(),
       text: z.string().min(1),
+      target: z.enum(["personal", "company"]).optional(),
     }).parse(d),
   )
   .handler(async ({ data }) => {
-    const me = await linkedInMe();
-    const author = `urn:li:person:${me.sub}`;
-    const payload = {
-      author,
-      lifecycleState: "PUBLISHED",
-      specificContent: {
-        "com.linkedin.ugc.ShareContent": {
-          shareCommentary: { text: data.text },
-          shareMediaCategory: "NONE",
-        },
-      },
-      visibility: { "com.linkedin.ugc.MemberNetworkVisibility": "PUBLIC" },
-    };
-    const res = await fetch(`${GW}/linkedin/v2/ugcPosts`, {
-      method: "POST",
-      headers: { ...authHeaders("LINKEDIN_API_KEY"), "X-Restli-Protocol-Version": "2.0.0" },
-      body: JSON.stringify(payload),
-    });
-    if (!res.ok) throw new Error(`LinkedIn post: ${res.status} ${await res.text()}`);
-    const json = (await res.json()) as { id?: string };
+    const supabase = serverSupabase();
+
+    // Decide personal vs company. Prefer explicit target, else derive from the
+    // draft's channel kind.
+    let target = data.target ?? "personal";
+    if (!data.target && data.draftId) {
+      const { data: draft } = await supabase
+        .from("content_drafts")
+        .select("channel_id, content_channels(kind)")
+        .eq("id", data.draftId)
+        .maybeSingle();
+      const kind = (draft as { content_channels?: { kind?: string } } | null)?.content_channels?.kind;
+      if (kind === "linkedin_company") target = "company";
+    }
+
+    const urlEnv = target === "company" ? "N8N_LINKEDIN_COMPANY_URL" : "N8N_LINKEDIN_PERSONAL_URL";
+    const result = await callWebhook<{ id?: string; url?: string }>(urlEnv, { text: data.text });
 
     if (data.draftId) {
-      const supabase = serverSupabase();
       await supabase
         .from("content_drafts")
-        .update({ status: "posted", posted_url: json.id ? `urn:${json.id}` : null })
+        .update({ status: "posted", posted_url: result?.url ?? result?.id ?? null })
         .eq("id", data.draftId);
     }
-    return { id: json.id };
+    return { id: result?.id ?? null, url: result?.url ?? null, target };
   });

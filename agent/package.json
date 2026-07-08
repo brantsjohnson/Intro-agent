@@ -5,7 +5,6 @@
   "type": "module",
   "description": "CLI that finds events, extracts organizers/sponsors, and sends outreach via my Gmail.",
   "scripts": {
-    "auth": "node src/gmail-auth.js",
     "discover": "node src/discover-events.js",
     "extract": "node src/extract-event-details.js",
     "contacts": "node src/resolve-contacts.js",
@@ -18,8 +17,6 @@
     "better-sqlite3": "^11.3.0",
     "cheerio": "^1.0.0",
     "dotenv": "^16.4.5",
-    "googleapis": "^144.0.0",
-    "open": "^10.1.0",
     "undici": "^6.20.0"
   }
 }
